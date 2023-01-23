@@ -146,7 +146,7 @@ out <- foreach (i = grid, .combine = rbind)  %dopar% {
   simulate(binary, n_users = i, n_rep = 5000)
 }
 
-# fwrite(out, "output/data/all_sims_cp.csv")
+fwrite(out, "output/data/all_sims_cp.csv")
 
 out <- fread("output/data/all_sims_cp.csv")
 
@@ -159,7 +159,8 @@ out |>
   ggplot(aes(x = n_users)) +
   geom_ribbon(aes(ymin = lower, ymax = upper), alpha = 0.4) + 
   geom_line(aes(y = mean)) +
-  theme_scoringutils()
+  theme_scoringutils() + 
+  labs(y = "Brier score", x = "Hypothetical users")
 
 
 
