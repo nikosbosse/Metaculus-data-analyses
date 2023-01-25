@@ -127,12 +127,18 @@ hypothetical_cp <- function(df, n_users, n_rep = 1000) {
     
     # brier score
     (df$resolution[1] - cp)^2
-  }) 
+  })
+  
+  
+  time <- apply(user_samples, MARGIN = 2, function(users) {
+    max(df[user_id %in% users, ]$t)
+  })
  
   mean <- mean(score)
   var <- var(score) 
+  max_t = mean(time)
   
-  return(c("mean" = mean, "var" = var))
+  return(c("mean" = mean, "var" = var, "max_t" = max_t))
 }
 
 
@@ -142,7 +148,7 @@ simulate <- function(binary, n_users, write = TRUE, n_rep = 1e3,
   sim <- binary[, .("score" = hypothetical_cp(.SD, n_users = n_users, 
                                               n_rep = n_rep)), 
                 by = "question_id"]
-  sim$desc <- rep(c("mean", "var"), times = nrow(sim) / 2)
+  sim$desc <- rep(c("mean", "var", "max_t"), times = nrow(sim) / 3)
   sim$n_users <- n_users
   
   sim <- sim |> 
@@ -174,7 +180,10 @@ fwrite(out, "output/data/150/all_sims_cp.csv")
 
 setDT(binary_charles)
 out_charles <- foreach (i = grid, .combine = rbind)  %dopar% {
-  simulate(binary_charles, n_users = i, n_rep = 5000, folder = "output/data/charles/")
+  simulate(binary_charles |>
+             filter_users(n = 150) |>
+             as.data.table()
+           , n_users = i, n_rep = 5000, folder = "output/data/charles/")
 }
 
 fwrite(out_charles, "output/data/charles/all_sims_cp.csv")
@@ -371,15 +380,92 @@ p2 <- out_charles |>
 
 
 
-out_charles |>
+p <- out_charles |>
   group_by(question_id) |>
+  filter_low_cp(cp_thresh = 0.01) |>
   mutate(first = var[1]) |>
   mutate(var = var / first) |>
   ggplot(aes(x = n_users)) +
   geom_line(aes(y = var, group = question_id), 
             alpha = 0.2, linewidth = 0.2) + 
   theme_scoringutils() + 
-  # scale_y_continuous(trans = "log10") +
-  labs(y = "Rel. change in variance", x = "Hypothetical users") 
+  scale_x_log10() + 
+  labs(y = "Rel. change in variance of Brier score", x = "Hypothetical users (log scale)")
+
+ggsave(filename = "output/figures/variance-bs-charles.png", plot = p, 
+       height = 3.5, width = 7)
   
 
+p1 <- binary_charles |>
+  filter_users(n = 150) |>
+  group_by(question_id) |>
+  mutate(bs = (cp - resolution)^2) |>
+  mutate(forecast_id = 1:n()) |>
+  # filter(forecast_id > 50) |>
+  mutate(bs = bs - bs[1]) |>
+  mutate(t_total = (max(t) - min(t)) / (60 * 60 * 24), 
+         t_rel = (t - min(t)) / (60 * 60 * 24), 
+         t_perc = t_rel / t_total) |>
+  # mutate(mean_cp)
+  ggplot(aes(x = t_perc)) +
+  geom_line(aes(y = bs, group = question_id), 
+            alpha = 0.2, linewidth = 0.2) + 
+  theme_scoringutils() + 
+  scale_x_continuous(labels = label_perc) + 
+  labs(y = "Abs. change in Brier score", x = "Percentage of time passed")
+
+
+get_n_forecasters <- function(ids) {
+  n <- length(ids)
+  out <- numeric(n)
+  for (i in 1:length(ids)) {
+    out[i] <- length(unique(ids[1:i]))
+  }
+  return(out)
+}
+
+p2 <- binary_charles |>
+  filter_users(n = 150) |>
+  group_by(question_id) |>
+  mutate(n_forecasters = get_n_forecasters(user_id)) |>
+  mutate(bs = (cp - resolution)^2) |>
+  mutate(bs = bs - bs[1]) |>
+  ggplot(aes(x = n_forecasters)) +
+  geom_line(aes(y = bs, group = question_id), 
+            alpha = 0.2, linewidth = 0.2) + 
+  theme_scoringutils() + 
+  labs(y = "Abs. change in Brier score", x = "Number of forecasters")
+
+p <- p1 / p2
+
+ggsave(filename = "output/figures/bs-time-and-numbers-charles.png", plot = p, 
+       height = 5, width = 7)
+
+## Time analysis
+times <- binary_charles |>
+  group_by(question_id) |>
+  mutate(min_t = min(t), 
+         end_t = max(t)) |>
+  select(question_id, min_t, end_t) |>
+  unique() |>
+  ungroup()
+
+p <- out_charles |> 
+  inner_join(times) |>
+  mutate(total_t = end_t - min_t, 
+         rel_t = max_t - min_t, 
+         perc_t = rel_t / total_t) |>
+  group_by(n_users) |>
+  mutate(perc_t_mean = mean(perc_t)) |>
+  ggplot(aes(y = perc_t, x = n_users)) + 
+  geom_line(aes(y = perc_t, group = question_id), 
+            alpha = 0.2, linewidth = 0.2) + 
+  geom_line(aes(y = perc_t_mean)) + 
+  scale_x_log10() + 
+  scale_y_continuous(labels = label_perc) +
+  theme_scoringutils() + 
+  labs(y = "Latest included forecast as % of overall time", x = "Hypothetical users")
+
+ggsave(filename = "output/figures/time-sims-charles.png", plot = p, 
+       height = 3.5, width = 7)
+  
