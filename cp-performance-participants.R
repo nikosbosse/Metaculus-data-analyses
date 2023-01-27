@@ -204,7 +204,7 @@ fwrite(out_charles_without_r, "output/data/charles-without-replacement/all_sims_
 
 
 # ============================================================================ #
-# Visualise results - functions
+# Analysis - helper functions
 # ============================================================================ #
 
 regression <- function(binary) {
@@ -224,40 +224,9 @@ regression <- function(binary) {
     labs(y = "Brier Score", x = "Number of forecasters")
 }
 
-mean_normalised_bs <- function(out) {
-  out |>
-    group_by(question_id) |>
-    mutate(min = min(mean)) |>
-    mutate(normalised_bs = mean / min) |>
-    ungroup() |>
-    group_by(n_users) |>
-    summarise(improvement = median(normalised_bs)) |>
-    ggplot(aes(x = n_users)) +
-    # geom_hline(aes(yintercept = 1), linetype = "dashed", color = "grey30") +
-    geom_line(aes(y = improvement)) +
-    geom_point(aes(y = improvement)) +
-    theme_scoringutils() + 
-    labs(y = "Average Brier Score", x = "Hypothetical users")  + 
-    scale_x_continuous()
-}
-
-normalised_bs_spaghetti <- function(out) {
-  
-  out_charles |>
-    group_by(question_id) |>
-    mutate(mean = mean /  mean(mean)) |>
-    ggplot(aes(x = n_users)) +
-    # geom_hline(aes(yintercept = 1), linetype = "dashed", color = "grey30") +
-    geom_line(aes(y = mean, group = question_id), 
-              alpha = 0.2, linewidth = 0.2) + 
-    theme_scoringutils() + 
-    # scale_y_continuous(trans = "log10") +
-    labs(y = "Normalised Brier Score", x = "Hypothetical users")
-  
-}
 
 # ============================================================================ #
-# Visualise results - functions
+# Analysis
 # ============================================================================ #
 
 ## Aggregate level analysis ----------------------------------------------------
