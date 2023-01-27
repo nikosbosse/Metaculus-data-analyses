@@ -1,4 +1,3 @@
-# library(arrow)
 library(data.table)
 library(dplyr)
 library(jsonlite)
@@ -8,6 +7,8 @@ library("matrixStats")
 library(future.apply)
 library(ggpmisc)
 library(patchwork)
+library(foreach)
+library(doParallel)
 
 # ============================================================================ #
 #                                 Load data                                    #
@@ -19,10 +20,111 @@ binary_pred_raw <- fromJSON("data/predictions-binary-hackathon.json") |>
 binary_questions_raw <- fromJSON("data/questions-binary-hackathon.json") |>
   as.data.table()
 
-# continuous_pred <- read_parquet("data/predictions-continuous-hackathon-v2.parquet")
-# setDT(continuous_pred)
-# continuous_questions <- fromJSON("data/questions-continuous-hackathon.json") |>
-#   as.data.table()
+# ============================================================================ #
+# filter data - helper functions
+# ============================================================================ #
+
+# function to filter questions that don't have at least n unique forecasters
+filter_users <- function(binary, n = 150) {
+  n_users <- 
+    binary |> 
+    group_by(question_id) |>
+    dplyr::summarise(n_user = length(unique(user_id)))
+  
+  binary <- binary |>
+    inner_join(
+      n_users |>
+        filter(n_user >= n)) |>
+    arrange(question_id, t)
+  return(binary)
+}
+
+# filter out question where the mean brier score is below a certain threshold
+filter_low_bs <- function(result, bs_thresh = 0.01) {
+  filtered_questions <- result |>
+    group_by(question_id) |>
+    filter(mean(mean) >= bs_thresh)
+  
+  return(filtered_questions)
+}
+
+
+# ============================================================================ #
+# Calculate community prediction - helper functions
+# ============================================================================ #
+
+# function to calculate the latest community prediction for a vector of predictions
+# function was tested and seems correct. 
+calc_latest_cp <- function(preds) {
+  n <- length(preds)
+  index <- 1:n
+  weight <- exp(sqrt(index) - sqrt(n))
+  
+  if(length(weight) != length(preds)) {
+    print(n)
+    print(weight)
+    print(preds)
+  }
+  matrixStats::weightedMedian(x = preds, w = weight)
+}
+
+# function that does the actual bootstrapping, drawing a random set of users
+hypothetical_cp <- function(df, n_users, n_rep = 1000, with_replacement = TRUE) {
+  user_ids <- df$user_id 
+  unique_ids <- unique(user_ids)
+  
+  user_samples <- replicate(
+    n_rep, 
+    sample(x = unique_ids, size = n_users, replace = with_replacement)
+  ) 
+    
+  score <- apply(user_samples, MARGIN = 2, function(users) {
+    indices <- sapply(users, function(user) {
+      which(user_ids == user)
+    }) |>
+      unlist() |>
+      sort()
+    
+    cp <- df[indices, ]$prediction |>
+      calc_latest_cp()
+    
+    # brier score
+    (df$resolution[1] - cp)^2
+  })
+  
+  time <- apply(user_samples, MARGIN = 2, function(users) {
+    max(df[user_id %in% users, ]$t)
+  })
+ 
+  mean <- mean(score)
+  var <- var(score) 
+  max_t = mean(time)
+  
+  return(c("mean" = mean, "var" = var, "max_t" = max_t))
+}
+
+
+# function to apply the hypothetical cp to a data.frame and store results
+simulate <- function(binary, n_users, write = TRUE, n_rep = 1e3, 
+                     with_replacement = TRUE,
+                     folder = "output/data/") {
+  sim <- binary[, .("score" = hypothetical_cp(.SD, n_users = n_users, 
+                                              n_rep = n_rep, 
+                                              with_replacement = with_replacement)), 
+                by = "question_id"]
+  sim$desc <- rep(c("mean", "var", "max_t"), times = nrow(sim) / 3)
+  sim$n_users <- n_users
+  
+  sim <- sim |> 
+    data.table::dcast(question_id + n_users ~ desc, value.var = "score")
+  
+  if (write) {
+    filename <- paste0(folder, "simulate_cp_", n_users)
+    fwrite(sim, file = filename)
+  }
+  return(sim)
+}
+
 
 
 # ============================================================================ #
@@ -39,35 +141,9 @@ binary_pred <- binary_pred_raw |>
 
 binary <- inner_join(binary_questions, binary_pred)
 
-# only keep questions with >= 50 users -----------------------------------------
-filter_users <- function(binary, n = 150) {
-  n_users <- 
-    binary |> 
-    group_by(question_id) |>
-    dplyr::summarise(n_user = length(unique(user_id)))
-  
-  binary <- binary |>
-    inner_join(
-      n_users |>
-        filter(n_user >= n)) |>
-    arrange(question_id, t)
-  return(binary)
-}
-
-filter_low_cp <- function(result, cp_thresh = 0.01) {
-  filtered_questions <- result |>
-    group_by(question_id) |>
-    filter(mean(mean) >= cp_thresh)
-  
-  return(filtered_questions)
-}
-
-
-
-# try a different filtering method, where we only keep predictions in 
-# the first 25 percent of the question time. 
-# Also don't keep questions if the oldest prediction is more than a year apart
-# from the newest. 
+# Additional filtering, "Charles method" ---------------------------------------
+# - keep only first 25 percent of the question time. 
+# - keep questions if the newest prediction is <1 year newer than the oldest
 # https://forum.effectivealtruism.org/posts/xF8EWBouJRZpRgFgu/how-does-forecast-quantity-impact-forecast-quality-on-1
 
 s_in_year <- 60 * 60 * 24 * 365
@@ -79,114 +155,50 @@ binary_charles <- binary |>
 
 
 # ============================================================================ #
-# Define functions 
-# ============================================================================ #
-
-# function to calculate the latest community prediction
-# function was tested and seems correct. 
-calc_latest_cp <- function(preds) {
-  n <- length(preds)
-  index <- 1:n
-  weight <- exp(sqrt(index) - sqrt(n))
-  
-  if(length(weight) != length(preds)) {
-    print(n)
-    print(weight)
-    print(preds)
-  }
-  matrixStats::weightedMedian(x = preds, w = weight)
-}
-# 
-# test_questions <- binary$question_id |>
-#   unique() |>
-#   head(20)
-# 
-# binary |> 
-#   as_tibble() |>
-#   filter(question_id %in% test_questions) |>
-#   group_by(question_id) |>
-#   mutate(cp_test = calc_latest_cp(prediction)) |>
-#   dplyr::mutate(row_id = row_number()) |>
-#   dplyr::filter(row_id == max(row_id))
-
-
-# function to compute the hypothetical cp for a given number of hypothetical 
-# users
-hypothetical_cp <- function(df, n_users, n_rep = 1000) {
-  user_ids <- df$user_id |>
-    unique()
-  
-  user_samples <- replicate(
-    n_rep, 
-    sample(x = user_ids, size = n_users, replace = FALSE)
-  ) 
-  
-  score <- apply(user_samples, MARGIN = 2, function(users) {
-    cp <- df[user_id %in% users, ]$prediction |>
-      calc_latest_cp()
-    
-    # brier score
-    (df$resolution[1] - cp)^2
-  })
-  
-  
-  time <- apply(user_samples, MARGIN = 2, function(users) {
-    max(df[user_id %in% users, ]$t)
-  })
- 
-  mean <- mean(score)
-  var <- var(score) 
-  max_t = mean(time)
-  
-  return(c("mean" = mean, "var" = var, "max_t" = max_t))
-}
-
-
-# function to apply the hypothetical cp to a data.frame and store results
-simulate <- function(binary, n_users, write = TRUE, n_rep = 1e3, 
-                     folder = "output/data/") {
-  sim <- binary[, .("score" = hypothetical_cp(.SD, n_users = n_users, 
-                                              n_rep = n_rep)), 
-                by = "question_id"]
-  sim$desc <- rep(c("mean", "var", "max_t"), times = nrow(sim) / 3)
-  sim$n_users <- n_users
-  
-  sim <- sim |> 
-    data.table::dcast(question_id + n_users ~ desc, value.var = "score")
-  
-  if (write) {
-    filename <- paste0(folder, "simulate_cp_", n_users)
-    fwrite(sim, file = filename)
-  }
-  return(sim)
-}
-
-# ============================================================================ #
 # Apply functions to calculate hypothetical cp
 # ============================================================================ #
-
-library(foreach)
-library(doParallel)
 
 registerDoParallel(cores = 4)
 
 grid <- c(5, 7, 10, 15, 20, 25, 30, 35, 40, 50, 65, 80, 100, 120, 150)
 
+# first version with data including all predictions until question closes
+# including only questions with at least 150 forecasters
 out <- foreach (i = grid, .combine = rbind)  %dopar% {
   simulate(binary, n_users = i, n_rep = 5000)
 }
-
 fwrite(out, "output/data/150/all_sims_cp.csv")
 
-setDT(binary_charles)
+
+# "Charles filter", only using the first 25% of the question lifetime
+# including only questions with at least 150 forecasters
 out_charles <- foreach (i = grid, .combine = rbind)  %dopar% {
-  simulate(binary_charles |>
-             filter_users(n = 150) |>
-             as.data.table()
-           , n_users = i, n_rep = 5000, folder = "output/data/charles/")
+  data <- binary_charles |>
+    filter_users(n = 150) |>
+    as.data.table()
+  
+  simulate(binary = data, 
+           n_users = i, 
+           write = TRUE,
+           with_replacement = TRUE,
+           n_rep = 5000, folder = "output/data/charles/")
 }
 
 fwrite(out_charles, "output/data/charles/all_sims_cp.csv")
+
+# "Charles filter", only using the first 25% of the question lifetime
+# including only questions with at least 150 forecasters
+# sampled without replacement
+out_charles_without_r <- foreach (i = grid, .combine = rbind)  %dopar% {
+  simulate(binary_charles |>
+             filter_users(n = 150) |>
+             as.data.table()
+           , n_users = i, n_rep = 5000, 
+           with_replacement = FALSE,
+           folder = "output/data/charles-without-replacement/")
+}
+
+fwrite(out_charles_without_r, "output/data/charles-without-replacement/all_sims_cp.csv")
 
 
 
@@ -194,18 +206,6 @@ fwrite(out_charles, "output/data/charles/all_sims_cp.csv")
 # ============================================================================ #
 # Visualise results - functions
 # ============================================================================ #
-
-# out |>
-#   group_by(n_users) |>
-#   summarise(mean = mean(mean), 
-#             sd = mean(sqrt(var))) |>
-#   mutate(lower = mean - sd, 
-#          upper = mean + sd) |>
-#   ggplot(aes(x = n_users)) +
-#   geom_ribbon(aes(ymin = lower, ymax = upper), alpha = 0.4) + 
-#   geom_line(aes(y = mean)) +
-#   theme_scoringutils() + 
-#   labs(y = "Brier score", x = "Hypothetical users")
 
 regression <- function(binary) {
   binary |>
@@ -260,12 +260,13 @@ normalised_bs_spaghetti <- function(out) {
 # Visualise results - functions
 # ============================================================================ #
 
-## Aggregate level analysis
+## Aggregate level analysis ----------------------------------------------------
 binary |>
   filter_users(n = 0) |>
   regression() |>
   (\(x) {
-    ggsave(filename = "output/figures/scatter-all-questions.png", plot = x)
+    ggsave(filename = "output/figures/scatter-all-questions.png", plot = x, 
+           height = 4, width = 7)
   })()
 
 
@@ -273,7 +274,8 @@ binary_charles |>
   filter_users(n = 0) |>
   regression() |>
   (\(x) {
-    ggsave(filename = "output/figures/scatter-all-questions-charles.png", plot = x)
+    ggsave(filename = "output/figures/scatter-all-questions-charles.png", plot = x, 
+           height = 4, width = 7)
   })()
 
 
@@ -300,10 +302,8 @@ p2 +
 
 
 
-## Individual level analysis
+## Individual level analysis ---------------------------------------------------
 
-out_50 <- fread("output/data/all_sims_cp.csv")
-out <- fread("output/data/150/all_sims_cp.csv")
 out_charles <- fread("output/data/charles/all_sims_cp.csv")
 
 
@@ -315,7 +315,6 @@ p1 <- out_charles |>
   geom_line(aes(y = mean, group = question_id), 
             alpha = 0.2, linewidth = 0.2) + 
   theme_scoringutils() + 
-  # scale_y_continuous(trans = "log10") +
   labs(y = "Abs. change in Brier score", x = "Hypothetical users") 
 
 label_perc <- function(x) {
@@ -323,7 +322,7 @@ label_perc <- function(x) {
 }
 
 p2 <- out_charles |>
-  filter_low_cp(cp_thresh = 0.01) |>
+  filter_low_bs(bs_thresh = 0.01) |>
   group_by(question_id) |>
   mutate(first = mean[1]) |>
   mutate(mean = mean / first) |>
@@ -357,7 +356,7 @@ p1 <- out_charles |>
 
 p2 <- out_charles |>
   group_by(question_id) |>
-  filter_low_cp(cp_thresh = 0.01) |>
+  filter_low_bs(bs_thresh = 0.01) |>
   mutate(first = mean[1]) |>
   mutate(normalised_bs = mean / first) |>
   ungroup() |>
@@ -382,7 +381,7 @@ p2 <- out_charles |>
 
 p <- out_charles |>
   group_by(question_id) |>
-  filter_low_cp(cp_thresh = 0.01) |>
+  filter_low_bs(bs_thresh = 0.01) |>
   mutate(first = var[1]) |>
   mutate(var = var / first) |>
   ggplot(aes(x = n_users)) +
@@ -468,4 +467,11 @@ p <- out_charles |>
 
 ggsave(filename = "output/figures/time-sims-charles.png", plot = p, 
        height = 3.5, width = 7)
+
+
+# # Follow up: 
+# - what features make ensembles better or worse? 
+# - Are they better if they are very different? 
+
+
   
