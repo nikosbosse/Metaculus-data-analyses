@@ -107,7 +107,7 @@ hypothetical_cp <- function(df, n_users, n_rep = 1000, with_replacement = TRUE) 
 # function to apply the hypothetical cp to a data.frame and store results
 simulate <- function(binary, n_users, write = TRUE, n_rep = 1e3, 
                      with_replacement = TRUE,
-                     folder = "output/data/") {
+                     folder = "aggregation-more-users/output/data/") {
   sim <- binary[, .("score" = hypothetical_cp(.SD, n_users = n_users, 
                                               n_rep = n_rep, 
                                               with_replacement = with_replacement)), 
@@ -167,7 +167,7 @@ grid <- c(5, 7, 10, 15, 20, 25, 30, 35, 40, 50, 65, 80, 100, 120, 150)
 out <- foreach (i = grid, .combine = rbind)  %dopar% {
   simulate(binary, n_users = i, n_rep = 5000)
 }
-fwrite(out, "output/data/150/all_sims_cp.csv")
+fwrite(out, "aggregation-more-users/output/data/150/all_sims_cp.csv")
 
 
 # "Charles filter", only using the first 25% of the question lifetime
@@ -181,10 +181,10 @@ out_charles <- foreach (i = grid, .combine = rbind)  %dopar% {
            n_users = i, 
            write = TRUE,
            with_replacement = TRUE,
-           n_rep = 5000, folder = "output/data/charles/")
+           n_rep = 5000, folder = "aggregation-more-users/output/data/charles/")
 }
 
-fwrite(out_charles, "output/data/charles/all_sims_cp.csv")
+fwrite(out_charles, "aggregation-more-users/output/data/charles/all_sims_cp.csv")
 
 # "Charles filter", only using the first 25% of the question lifetime
 # including only questions with at least 150 forecasters
@@ -195,10 +195,10 @@ out_charles_without_r <- foreach (i = grid, .combine = rbind)  %dopar% {
              as.data.table()
            , n_users = i, n_rep = 5000, 
            with_replacement = FALSE,
-           folder = "output/data/charles-without-replacement/")
+           folder = "aggregation-more-users/output/data/charles-without-replacement/")
 }
 
-fwrite(out_charles_without_r, "output/data/charles-without-replacement/all_sims_cp.csv")
+fwrite(out_charles_without_r, "aggregation-more-users/output/data/charles-without-replacement/all_sims_cp.csv")
 
 
 
@@ -234,7 +234,7 @@ binary |>
   filter_users(n = 0) |>
   regression() |>
   (\(x) {
-    ggsave(filename = "output/figures/scatter-all-questions.png", plot = x, 
+    ggsave(filename = "aggregation-more-users/output/figures/scatter-all-questions.png", plot = x, 
            height = 4, width = 7)
   })()
 
@@ -243,7 +243,7 @@ binary_charles |>
   filter_users(n = 0) |>
   regression() |>
   (\(x) {
-    ggsave(filename = "output/figures/scatter-all-questions-charles.png", plot = x, 
+    ggsave(filename = "aggregation-more-users/output/figures/scatter-all-questions-charles.png", plot = x, 
            height = 4, width = 7)
   })()
 
@@ -262,7 +262,7 @@ p2 <- binary |>
 
 (p1 + p2) |>
   (\(x) {
-    ggsave(filename = "output/figures/scatter-100plus-questions.png", plot = x, 
+    ggsave(filename = "aggregation-more-users/output/figures/scatter-100plus-questions.png", plot = x, 
            height = 3.5, width = 7)
   })()
 
@@ -273,7 +273,7 @@ p2 +
 
 ## Individual level analysis ---------------------------------------------------
 
-out_charles <- fread("output/data/charles/all_sims_cp.csv")
+out_charles <- fread("aggregation-more-users/output/data/charles/all_sims_cp.csv")
 
 
 p1 <- out_charles |>
@@ -305,7 +305,7 @@ p2 <- out_charles |>
 
 (p1 / p2) |>
   (\(x) {
-    ggsave(filename = "output/figures/scatter-questions-spaghetti-charles.png", plot = x, 
+    ggsave(filename = "aggregation-more-users/output/figures/scatter-questions-spaghetti-charles.png", plot = x, 
            height = 5, width = 7)
   })()
 
@@ -342,7 +342,7 @@ p2 <- out_charles |>
 
 (p1 / p2) |>
   (\(x) {
-    ggsave(filename = "output/figures/average-bs-charles.png", plot = x, 
+    ggsave(filename = "aggregation-more-users/output/figures/average-bs-charles.png", plot = x, 
            height = 5, width = 7)
   })()
 
@@ -360,7 +360,7 @@ p <- out_charles |>
   scale_x_log10() + 
   labs(y = "Rel. change in variance of Brier score", x = "Hypothetical users (log scale)")
 
-ggsave(filename = "output/figures/variance-bs-charles.png", plot = p, 
+ggsave(filename = "aggregation-more-users/output/figures/variance-bs-charles.png", plot = p, 
        height = 3.5, width = 7)
   
 
@@ -406,7 +406,7 @@ p2 <- binary_charles |>
 
 p <- p1 / p2
 
-ggsave(filename = "output/figures/bs-time-and-numbers-charles.png", plot = p, 
+ggsave(filename = "aggregation-more-users/output/figures/bs-time-and-numbers-charles.png", plot = p, 
        height = 5, width = 7)
 
 ## Time analysis
@@ -434,7 +434,7 @@ p <- out_charles |>
   theme_scoringutils() + 
   labs(y = "Latest included forecast as % of overall time", x = "Hypothetical users")
 
-ggsave(filename = "output/figures/time-sims-charles.png", plot = p, 
+ggsave(filename = "aggregation-more-users/output/figures/time-sims-charles.png", plot = p, 
        height = 3.5, width = 7)
 
 
