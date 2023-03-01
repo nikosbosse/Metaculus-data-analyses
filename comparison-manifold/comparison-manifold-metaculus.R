@@ -6,6 +6,7 @@ library(jsonlite)
 library(tidyr)
 library(ggplot2)
 library(lubridate)
+library(patchwork)
 
 # --------------------------- Get Manifold Data ----------------------------- ##
 # helper functions
@@ -263,5 +264,106 @@ n_predictions <- filtered_data |>
 
 
 ggsave("comparison-manifold/output/number-of-forecasts.jpg", width = 5.5, height = 4.5)  
+
+
+
+## bootstrap analysis
+bootstrap_mean <- function(scores, index) {
+  scores <- scores[index, ]
+  mani <- mean(scores$Manifold)
+  meta <- mean(scores$Metaculus)
+  diff <- mani - meta
+  return(c(
+    "Manifold" = mani, 
+    "Metaculus" = meta, 
+    "Difference" = diff
+  ))
+}
+
+if (FALSE) {
+  n_bootstrap <- 1e5
+  bootstrap_means <- replicate(
+    n_bootstrap, 
+    expr = 
+      bootstrap_mean(
+        scores, 
+        sample(1:64, size = 64, replace = TRUE)
+      )
+  ) 
+  saveRDS(bootstrap_means, file = "comparison-manifold/output/bootstrap_means.RDS")
+} else {
+  bootstrap_means <- readRDS(file = "comparison-manifold/output/bootstrap_means.RDS")
+}
+
+
+plot_df <- bootstrap_means |>
+  t() |>
+  as.data.frame() |>
+  pivot_longer(cols = c(Manifold, Metaculus, Difference), 
+               values_to = "score", names_to = "Platform")
+
+observations <- data.frame(
+  "Platform" = c("Manifold", "Metaculus"), 
+  "score" = c(mean(scores$Manifold), mean(scores$Metaculus))
+)
+
+p_means <- plot_df |>
+  filter(Platform %in% c("Metaculus", "Manifold")) |>
+  ggplot(aes(x = score, 
+             fill = Platform, color = Platform)) +
+  geom_histogram(aes(y = after_stat(count/sum(count))),
+                 position = "identity",
+                 bins = 60,
+                 alpha = 0.5,
+                 # fill = "grey60", 
+                 color = "white") + 
+  geom_segment(inherit.aes = FALSE, 
+               data = observations,
+               aes(x = score, y = 0, xend = score, yend = 0.044),
+               color = "grey20",
+               linetype = "dashed", linewidth = 1.05) +
+  # geom_vline(data = observations, aes(xintercept = score), 
+  #            linetype = "dashed", linewidth = 1.05, color = "grey20") +
+  theme_scoringutils() + 
+  # geom_vline(xintercept = observed, color = "grey20", linetype = "dashed") + 
+  expand_limits(x = 0) + 
+  labs(y = str_wrap("Proportion of bootstrap samples", width = 20), 
+       x = "Mean Brier score") 
+
+observed <- mean(scores$Manifold - scores$Metaculus)
+
+p_diff <- plot_df |>
+  filter(Platform %in% c("Difference")) |>
+  ggplot(aes(x = score)) +
+  geom_histogram(aes(y = after_stat(count/sum(count))),
+                 bins = 60,
+                 fill = "grey70", 
+                 color = "white") + 
+  theme_scoringutils() + 
+  # geom_vline(xintercept = observed, color = "grey20", 
+  #           
+  #            linetype = "dashed", linewidth = 1.05) +
+  geom_segment(inherit.aes = FALSE, 
+               aes(x = observed, y = 0, xend = observed, yend = 0.07, 
+                   color = "Observed"),
+               linetype = "dashed", linewidth = 1.05) +
+  expand_limits(x = 0) + 
+  scale_color_manual(values = "grey20") + 
+  labs(y = str_wrap("Proportion of bootstrap samples", width = 20), 
+       x = "Mean difference in Brier score", 
+       color = "") 
+
+p_combined <- p_means / p_diff + 
+  plot_layout(guides = "collect") & 
+  theme(legend.position = "bottom", 
+        axis.title.y = element_text(size = 10)) 
+
+ggsave("comparison-manifold/output/bootstrap-means.jpg", plot = p_combined,
+       width = 7.5, height = 6.5)  
+
+t.test(scores$Manifold, scores$Metaculus, paired = TRUE)
+wilcox.test(scores$Manifold, scores$Metaculus, paired = TRUE)
+diffs <- bootstrap_means[3, ]
+diffs[diffs <= 0]
 
 
