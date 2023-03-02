@@ -140,8 +140,11 @@ filtered_data <- filtered_data |>
 
 # --------------------------- Analysis ---------------------------- ##
 
-time_weighted_brier_score <- function(pred, resolution, t, close_time, 
-                                      debug = FALSE) {
+time_weighted_score <- function(pred, 
+                                score = "Brier", 
+                                resolution, 
+                                t, close_time, 
+                                debug = FALSE) {
   t_min <- min(t)
   t_max <- close_time
   t_total = difftime(t_max, t_min, units = "secs") |>
@@ -156,10 +159,13 @@ time_weighted_brier_score <- function(pred, resolution, t, close_time,
               "overall duration:", sum(durations), "\n",
               "overall time:", t_total), "\n"
     )
-    
   }  
   
-  score <- (pred - resolution)^2
+  if (score == "Brier") {
+    score <- (pred - resolution)^2
+  } else if (score == "Log") {
+    score <- -log(1 - abs(resolution - pred))
+  }
   score <- ((score * durations) / t_total)
   score <- sum(score)
   
@@ -171,7 +177,7 @@ scores <-
   filtered_data |>
   group_by(question_id, platform) |>
   summarise(
-    score = time_weighted_brier_score(
+    score = time_weighted_score(
       pred = p, 
       close_time = unique(closeTime), 
       t = t,
@@ -179,9 +185,28 @@ scores <-
       debug = FALSE
     )) |>
   pivot_wider(names_from = platform, values_from = score) |>
-  mutate(manifold_better = Metaculus > Manifold)
+  mutate(manifold_better = Metaculus > Manifold) |>
+  mutate(Difference = Manifold - Metaculus)
+  
+
+scores_log <- 
+  filtered_data |>
+  group_by(question_id, platform) |>
+  summarise(
+    score = time_weighted_score(
+      pred = p, 
+      score = "Log",
+      close_time = unique(closeTime), 
+      t = t,
+      resolution = unique(resolution), 
+      debug = FALSE
+    )) |>
+  pivot_wider(names_from = platform, values_from = score) |>
+  mutate(manifold_better = Metaculus > Manifold) |>
+  mutate(Difference = Manifold - Metaculus)
 
 
+s# Giant plot with predictions over time
 p_timelines <- filtered_data |>
   # filter(question_id == 10046) |>
   # duplicate every forecast with the next points to get straight lines on the 
@@ -223,6 +248,11 @@ scores |>
   summarise(Metaculus = mean(Metaculus), 
             Manifold = mean(Manifold))
 
+scores_log |>
+  ungroup() |>
+  summarise(Metaculus = mean(Metaculus), 
+            Manifold = mean(Manifold))
+
 wilcox.test(scores$Metaculus, scores$Manifold)
 
 # count how often one or the other ones
@@ -230,6 +260,9 @@ comparison <- scores |>
   group_by(manifold_better) |>
   summarise(n = n()) |>
   pull(n)
+sum(scores$manifold_better)
+sum(scores_log$manifold_better)
+
 
 n_predictions <- filtered_data |>
   group_by(question_id, platform) |>
@@ -267,7 +300,41 @@ ggsave("comparison-manifold/output/number-of-forecasts.jpg", width = 5.5, height
 
 
 
-## bootstrap analysis
+
+
+
+
+
+## -------------------------- bootstrap analysis ---------------------------- ##
+
+# Analysis on the difference between a single questions ------------------------
+bootstrap_single_mean <- 
+  replicate(
+    1e2, 
+    expr = sample(scores$Difference, size = 1e2)
+  )
+
+
+plot_df <- data.frame (
+  diff = sample(scores$Difference, size = 1e5, replace = TRUE)
+)
+
+
+p_differences <- scores |> 
+  ggplot(aes(x = Difference)) + 
+  geom_histogram(aes(y = after_stat(count / sum(count))), 
+                 bins = 30, 
+                 color = "white") + 
+  theme_scoringutils() + 
+  labs(y = "Proportion", x = "Difference in Brier score (Manifold - Metaculus)")
+
+ggsave("comparison-manifold/output/score-differences.jpg", plot = p_differences,
+       width = 7.5, height = 3.5)
+
+
+
+# Analysis on the mean across 64 questions -------------------------------------
+
 bootstrap_mean <- function(scores, index) {
   scores <- scores[index, ]
   mani <- mean(scores$Manifold)
@@ -295,75 +362,101 @@ if (FALSE) {
   bootstrap_means <- readRDS(file = "comparison-manifold/output/bootstrap_means.RDS")
 }
 
+if (FALSE) {
+  n_bootstrap <- 1e4
+  bootstrap_means_log <- replicate(
+    n_bootstrap, 
+    expr = 
+      bootstrap_mean(
+        scores_log, 
+        sample(1:64, size = 64, replace = TRUE)
+      )
+  ) 
+  saveRDS(bootstrap_means_log, file = "comparison-manifold/output/bootstrap_means_log.RDS")
+} else {
+  bootstrap_means_log <- readRDS(file = "comparison-manifold/output/bootstrap_means_log.RDS")
+}
 
-plot_df <- bootstrap_means |>
-  t() |>
-  as.data.frame() |>
-  pivot_longer(cols = c(Manifold, Metaculus, Difference), 
-               values_to = "score", names_to = "Platform")
 
-observations <- data.frame(
-  "Platform" = c("Manifold", "Metaculus"), 
-  "score" = c(mean(scores$Manifold), mean(scores$Metaculus))
-)
+plot_bootstrap <- function(bootstrap_means, scores) {
+  plot_df <- bootstrap_means |>
+    t() |>
+    as.data.frame() |>
+    pivot_longer(cols = c(Manifold, Metaculus, Difference), 
+                 values_to = "score", names_to = "Platform")
+  
+  observations <- data.frame(
+    "Platform" = c("Manifold", "Metaculus"), 
+    "score" = c(mean(scores$Manifold), mean(scores$Metaculus))
+  )
+  
+  p_means <- plot_df |>
+    filter(Platform %in% c("Metaculus", "Manifold")) |>
+    ggplot(aes(x = score, 
+               fill = Platform, color = Platform)) +
+    geom_histogram(aes(y = after_stat(count/sum(count))),
+                   position = "identity",
+                   bins = 60,
+                   alpha = 0.5,
+                   # fill = "grey60", 
+                   color = "white") + 
+    geom_segment(inherit.aes = FALSE, 
+                 data = observations,
+                 aes(x = score, y = 0, xend = score, yend = 0.044),
+                 color = "grey20",
+                 linetype = "dashed", linewidth = 1.05) +
+    # geom_vline(data = observations, aes(xintercept = score), 
+    #            linetype = "dashed", linewidth = 1.05, color = "grey20") +
+    theme_scoringutils() + 
+    # geom_vline(xintercept = observed, color = "grey20", linetype = "dashed") + 
+    expand_limits(x = 0) + 
+    labs(y = str_wrap("Proportion of bootstrap samples", width = 20), 
+         x = "Mean Brier score") 
+  
+  observed <- mean(scores$Manifold - scores$Metaculus)
+  
+  p_diff <- plot_df |>
+    filter(Platform %in% c("Difference")) |>
+    ggplot(aes(x = score)) +
+    geom_histogram(aes(y = after_stat(count/sum(count))),
+                   bins = 60,
+                   fill = "grey70", 
+                   color = "white") + 
+    theme_scoringutils() + 
+    geom_segment(inherit.aes = FALSE, 
+                 aes(x = observed, y = 0, xend = observed, yend = 0.07, 
+                     color = "Observed"),
+                 linetype = "dashed", linewidth = 1.05) +
+    expand_limits(x = 0) + 
+    scale_color_manual(values = "grey20") + 
+    labs(y = str_wrap("Proportion of bootstrap samples", width = 20), 
+         x = "Mean difference in Brier score", 
+         color = "") 
+  
+  p_diff <- p_diff + 
+    plot_layout(guides = "collect") & 
+    theme(legend.position = "bottom", 
+          axis.title.y = element_text(size = 10)) 
+  
+  return(p_diff)
+}
 
-p_means <- plot_df |>
-  filter(Platform %in% c("Metaculus", "Manifold")) |>
-  ggplot(aes(x = score, 
-             fill = Platform, color = Platform)) +
-  geom_histogram(aes(y = after_stat(count/sum(count))),
-                 position = "identity",
-                 bins = 60,
-                 alpha = 0.5,
-                 # fill = "grey60", 
-                 color = "white") + 
-  geom_segment(inherit.aes = FALSE, 
-               data = observations,
-               aes(x = score, y = 0, xend = score, yend = 0.044),
-               color = "grey20",
-               linetype = "dashed", linewidth = 1.05) +
-  # geom_vline(data = observations, aes(xintercept = score), 
-  #            linetype = "dashed", linewidth = 1.05, color = "grey20") +
-  theme_scoringutils() + 
-  # geom_vline(xintercept = observed, color = "grey20", linetype = "dashed") + 
-  expand_limits(x = 0) + 
-  labs(y = str_wrap("Proportion of bootstrap samples", width = 20), 
-       x = "Mean Brier score") 
 
-observed <- mean(scores$Manifold - scores$Metaculus)
-
-p_diff <- plot_df |>
-  filter(Platform %in% c("Difference")) |>
-  ggplot(aes(x = score)) +
-  geom_histogram(aes(y = after_stat(count/sum(count))),
-                 bins = 60,
-                 fill = "grey70", 
-                 color = "white") + 
-  theme_scoringutils() + 
-  # geom_vline(xintercept = observed, color = "grey20", 
-  #           
-  #            linetype = "dashed", linewidth = 1.05) +
-  geom_segment(inherit.aes = FALSE, 
-               aes(x = observed, y = 0, xend = observed, yend = 0.07, 
-                   color = "Observed"),
-               linetype = "dashed", linewidth = 1.05) +
-  expand_limits(x = 0) + 
-  scale_color_manual(values = "grey20") + 
-  labs(y = str_wrap("Proportion of bootstrap samples", width = 20), 
-       x = "Mean difference in Brier score", 
-       color = "") 
-
-p_combined <- p_means / p_diff + 
-  plot_layout(guides = "collect") & 
-  theme(legend.position = "bottom", 
-        axis.title.y = element_text(size = 10)) 
+p_combined <- plot_bootstrap(bootstrap_means, scores)
 
 ggsave("comparison-manifold/output/bootstrap-means.jpg", plot = p_combined,
-       width = 7.5, height = 6.5)  
+       width = 7.5, height = 3.5)
+
+p_combined_log <- plot_bootstrap(bootstrap_means_log, scores_log)
+
 
 t.test(scores$Manifold, scores$Metaculus, paired = TRUE)
 wilcox.test(scores$Manifold, scores$Metaculus, paired = TRUE)
 diffs <- bootstrap_means[3, ]
 diffs[diffs <= 0]
 
+
+
+t.test(scores_log$Manifold, scores_log$Metaculus, paired = TRUE)
+wilcox.test(scores_log$Manifold, scores_log$Metaculus, paired = TRUE)
 
