@@ -141,6 +141,7 @@ filtered_data <- filtered_data |>
 # --------------------------- Analysis ---------------------------- ##
 
 time_weighted_score <- function(pred, 
+                                pred2 = NULL,
                                 score = "Brier", 
                                 resolution, 
                                 t, close_time, 
@@ -165,6 +166,12 @@ time_weighted_score <- function(pred,
     score <- (pred - resolution)^2
   } else if (score == "Log") {
     score <- -log(1 - abs(resolution - pred))
+  } else if (score == "rel-log") {
+    if (resolution == 1) {
+      score <- log(pred / pred2)
+    } else {
+      score <- log((1 - pred) / (1 - pred2))
+    }
   }
   score <- ((score * durations) / t_total)
   score <- sum(score)
@@ -204,6 +211,25 @@ scores_log <-
   pivot_wider(names_from = platform, values_from = score) |>
   mutate(manifold_better = Metaculus > Manifold) |>
   mutate(Difference = Manifold - Metaculus)
+
+scores_rel_log <- 
+  filtered_data |>
+  pivot_wider(names_from = platform, values_from = p)
+  group_by(question_id, platform) |>
+  summarise(
+    score = time_weighted_score(
+      pred = p, 
+      score = "Log",
+      close_time = unique(closeTime), 
+      t = t,
+      resolution = unique(resolution), 
+      debug = FALSE
+    )) |>
+  pivot_wider(names_from = platform, values_from = score) |>
+  mutate(manifold_better = Metaculus > Manifold) |>
+  mutate(Difference = Manifold - Metaculus)
+
+
 
 
 s# Giant plot with predictions over time
