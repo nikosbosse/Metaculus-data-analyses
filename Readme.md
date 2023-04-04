@@ -2,6 +2,12 @@
 
 This repo contains the code used to generate the results for a series of blog posts using Metaculus Data. 
 
+## Wisdom of the Crowd vs. the Best of the Best of the Best
+
+[Link to the blogpost](https://forum.effectivealtruism.org/posts/akn2BFhhM9CzwpLEA/wisdom-of-the-crowd-vs-the-best-of-the-best-of-the-best). 
+
+Relevant folder: `forecaster-subsets`
+
 
 ## More is Probably More - Forecasting Accuracy and Number of Forecasters on Metaculus
 
