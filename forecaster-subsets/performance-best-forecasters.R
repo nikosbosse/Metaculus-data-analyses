@@ -33,6 +33,10 @@ combined <- inner_join(
   filter(!is.na(resolution))
 
 
+# there is a mistake in the original analysis: some questions have a 
+# resolve time that's before their close time. The analysis should have looked
+# at the minimum of min(resolve_time, close_time), instead of at close_time
+
 
 # ============================================================================ #
 # helper functions
