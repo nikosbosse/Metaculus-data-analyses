@@ -501,9 +501,14 @@ scores |>
   inner_join(cumulative_brier_diff) |>
   group_by(user_id) |>
   filter(resolve_time == max(resolve_time)) |>
-  ggplot(aes(y = cum_avg_diff_Brier, x = cum_brier_user, group = user_id)) + 
+  ggplot(aes(y = cum_avg_diff_Brier, x = cum_brier_user)) + 
   geom_point(size = 0.1, alpha = 0.7) +
+  stat_density_2d(geom = "polygon", alpha = 0.5,
+                  aes(fill = after_stat(level)),
+                  bins = 30) +
+  scale_fill_distiller(palette = "Blues", direction = 1) +
   theme_scoringutils() +
+  theme(legend.position = "none") + 
   scale_y_continuous(limits = c(-0.025, 0.025)) + 
   labs(y = "Avg. contribution (diff. in Brier scores)", x = "Average user Brier score")
 ggsave("forecasters-contributions/plots/avg-contribution-avg-brier-score.jpg", 
