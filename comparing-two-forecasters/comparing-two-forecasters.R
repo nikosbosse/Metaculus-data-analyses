@@ -24,7 +24,7 @@ forecast_with_noise <- function(true_prob, noise) {
 }
 
 brier_score <- function(obs, pred) {(pred - obs)^2}
-log_score <- function(obs, pred) {ifelse(obs == 1, log(pred), log(1 - pred))}
+log_score <- function(obs, pred) {ifelse(obs == 1, -log(pred), -log(1 - pred))}
 
 
 # generate synthetic data
@@ -68,14 +68,59 @@ replications_df <- rbindlist(replications, idcol = "id")
 replications_df |> 
   group_by(noise) |>
   filter(noise %in% noises) |>
-  summarise(`Mean Brier score` = mean(brier_score), 
-            `Mean Log score` = mean(log_score), 
+  summarise(`Mean Log score` = mean(log_score), 
+            `Mean Brier score` = mean(brier_score), 
              `Mean abs. diff pred - true`= round(mean(abs(true_prob - prediction)), 3), 
             `Mean abs. diff log odds` = round(mean(abs(true_log_odds - log_odds)), 3))
 
-# check significance
+
+# plot the difference between predictions between noisy and perfect forecaster
+bin_width <- 0.01
+binned <- replications_df |>
+  filter(noise %in% noises[-1]) |>
+  mutate(diff = abs(prediction - true_prob)) |>
+  mutate(bin = cut(true_prob, breaks = seq(0, 1, by = bin_width), include.lowest = TRUE, labels = FALSE)) |>
+  group_by(bin, noise) %>%
+  summarize(avg_diff = mean(diff), 
+            true_prob_midpoint = (unique(bin) - 0.5) * bin_width)
+
+binned |> 
+  ggplot(aes(x = true_prob_midpoint, y = avg_diff, colour = noise)) +
+  geom_point(size = 0.9) +
+  geom_line() +
+  labs(x = "True Probability", y = "Average Difference")
+
+
+# look at percentage of 'tournaments' won.
 n_obs_grid <- c(5, 10, 20, 50, 100, 200, 500, 1000)
 
+percentage_wins <- lapply(n_obs_grid, function(n_obs) {
+  replications_df |>
+    filter(noise %in% noises) |>
+    filter(obs_id <= n_obs) |>
+    mutate(n_obs = n_obs) |>
+    group_by(id, noise, n_obs) |> 
+    summarise(mean_logs = mean(log_score)) |>
+    pivot_wider(names_from = noise, values_from = mean_logs) |>
+    pivot_longer(cols = c(`0.1`, `0.3`, `0.5`, `1`), 
+                 values_to = "log_score", names_to = "noise") |>
+    mutate(perfect_wins = `0` < log_score) |>
+    group_by(noise, n_obs) |>
+    summarise(perc_perfect_wins = mean(perfect_wins))
+})
+
+perc_win_df <- rbindlist(percentage_wins)
+
+perc_win_df |>
+  ggplot(aes(y = perc_perfect_wins, x = n_obs, colour = noise)) + 
+  geom_point(size = 0.9) + 
+  geom_line() +
+  scale_x_continuous(breaks = c(10, 50, 100, 200, 500, 1000)) +
+  labs(y = "Proportion of replications in which perfect wins", x = "Number of available independent predictions (sample size)")
+
+
+
+# check significance
 get_pvals <- function(replications, score = "brier_score", test_fun = t.test) {
   pvals <- lapply(replications, function(replication) {
     d <- replication |> 
@@ -137,7 +182,7 @@ pvals_logs |>
   rbind(pvals_bs |> mutate(score = "brier")) |>
   pivot_longer(cols = c(`0.1`, `0.3`, `0.5`, `1`), names_to = "noise", values_to = "p-value") |>
   group_by(noise, score, n_obs) |>
-  summarise(`Proportion significant` = mean(`p-value` <= 0.5)) |> 
+  summarise(`Proportion significant` = mean(`p-value` <= 0.05)) |> 
   pivot_wider(names_from = score, values_from = `Proportion significant`) |> 
   select(-brier) |>
   mutate(logs = round(logs, 2)) |>
