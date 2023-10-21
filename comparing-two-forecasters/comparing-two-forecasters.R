@@ -30,7 +30,7 @@ log_score <- function(obs, pred) {ifelse(obs == 1, -log(pred), -log(1 - pred))}
 # generate synthetic data
 n_obs <- 1000
 reps <- 1:1000
-noises <- c(0, 0.1, 0.3, 0.5, 1)
+noises <- c(0, 0.1, 0.3, 0.5, 0.75, 1)
 
 replications <- lapply(reps, function(x) {
   true_prob <- runif(n = n_obs, min = 0, max = 1)
@@ -43,16 +43,17 @@ replications <- lapply(reps, function(x) {
   f0.3a <- forecast_with_noise(true_prob, noise = 0.3)
   f0.5 <- forecast_with_noise(true_prob, noise = 0.5)
   f0.5a <- forecast_with_noise(true_prob, noise = 0.5)
+  f0.75 <- forecast_with_noise(true_prob, noise = 0.75)
   f1 <- forecast_with_noise(true_prob, noise = 1)
   f1a <- forecast_with_noise(true_prob, noise = 1)
   
   df <- data.frame(
     obs_id = 1:n_obs,
-    prediction = c(f0, f0.1, f0.1a, f0.3, f0.3a, f0.5, f0.5a, f1, f1a), 
+    prediction = c(f0, f0.1, f0.1a, f0.3, f0.3a, f0.5, f0.5a, f0.75, f1, f1a), 
     obs = obs, 
     true_prob = true_prob, 
-    model = c(rep(c("f0", "f0.1", "f0.1a", "f0.3", "f0.3a", "f0.5", "f0.5a", "f1", "f1a"), each = n_obs)), 
-    noise = c(rep(c("0", "0.1", "0.1a", "0.3", "0.3a", "0.5", "0.5a", "1", "1a"), each = n_obs))
+    model = c(rep(c("f0", "f0.1", "f0.1a", "f0.3", "f0.3a", "f0.5", "f0.5a", "f0,75", "f1", "f1a"), each = n_obs)), 
+    noise = c(rep(c("0", "0.1", "0.1a", "0.3", "0.3a", "0.5", "0.5a", "0.75", "1", "1a"), each = n_obs))
   ) |>
     mutate(
       brier_score = brier_score(obs, prediction), 
@@ -65,6 +66,13 @@ replications <- lapply(reps, function(x) {
 
 replications_df <- rbindlist(replications, idcol = "id")
 
+rep_file <- "comparing-two-forecasters/replications_df.rds"
+if(!file.exists(rep_file)) {
+  replications_df |>
+    filter(noise %in% noises) |>
+    saveRDS(file = rep_file)
+}
+
 replications_df |> 
   group_by(noise) |>
   filter(noise %in% noises) |>
@@ -74,12 +82,14 @@ replications_df |>
             `Mean abs. diff log odds` = round(mean(abs(true_log_odds - log_odds)), 3))
 
 
+
 # plot the difference between predictions between noisy and perfect forecaster
 bin_width <- 0.01
 binned <- replications_df |>
   filter(noise %in% noises[-1]) |>
   mutate(diff = abs(prediction - true_prob)) |>
-  mutate(bin = cut(true_prob, breaks = seq(0, 1, by = bin_width), include.lowest = TRUE, labels = FALSE)) |>
+  mutate(bin = cut(true_prob, breaks = seq(0, 1, by = bin_width), 
+                   include.lowest = TRUE, labels = FALSE)) |>
   group_by(bin, noise) %>%
   summarize(avg_diff = mean(diff), 
             true_prob_midpoint = (unique(bin) - 0.5) * bin_width)
