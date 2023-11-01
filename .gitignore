@@ -5,3 +5,6 @@
 .DS_Store
 data/
 .venv/
+comparing-two-forecasters/replications_df.rds
+sandbox.R
+julia/
