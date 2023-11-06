@@ -182,8 +182,8 @@ actual_expected_score <- function(true_prob, predicted_prob) {
 create_behaviour_plot <- function(true_prob = 0.8) {
   predicted <- c(0.01, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99)
   actual <- actual_expected_score(true_prob, predicted)
-  levels <- factor(c("Idealised expected score", "Actual expected score", "Difference"), 
-                   levels = c(c("Idealised expected score", "Actual expected score", "Difference")))
+  levels <- factor(c("Subjective expected score", "Actual expected score", "Difference"), 
+                   levels = c(c("Subjective expected score", "Actual expected score", "Difference")))
   
   df <- data.frame(
     true_prob = true_prob, 
@@ -201,23 +201,25 @@ create_behaviour_plot <- function(true_prob = 0.8) {
     geom_hline(yintercept = 0, color = "grey70", linetype = "dashed") +
     geom_hline(yintercept = 0.25, color = "grey70", linetype = "dashed") +
     geom_vline(xintercept = true_prob, linewidth = 0.5) + 
+    scale_x_continuous(label = label_double) + 
     labs(y = "Brier score", x = "Predicted probability") + 
-    expand_limits(y = c(-0.2, 1))
+    expand_limits(y = c(-0.2, 1)) + 
+    theme(panel.grid.major = element_line(colour = "grey", linewidth = 0.02))
   
-  ggsave(filename = paste0("variation-perfect-forecaster/behaviour-gif/", true_prob, ".jpg"), 
+  ggsave(filename = paste0("comparing-against-subjective-expectations/behaviour-gif/", true_prob, ".jpg"), 
          width = 7, height = 3.5)
 }
 
 grid <- seq(0.05, 0.95, 0.05)
 lapply(grid, function(x) {create_behaviour_plot(x)})
 library(magick)
-imgs <- list.files("variation-perfect-forecaster/behaviour-gif/", full.names = TRUE)
+imgs <- list.files("comparing-against-subjective-expectations/behaviour-gif/", full.names = TRUE)
 img_list <- lapply(imgs, image_read)
 img_joined <- image_join(img_list)
 img_animated <- image_animate(img_joined, fps = 2)
 ## save to disk
 image_write(image = img_animated,
-            path = "variation-perfect-forecaster/behaviour.gif")
+            path = "comparing-against-subjective-expectations/behaviour.gif")
 
 
 
