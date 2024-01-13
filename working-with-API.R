@@ -7,11 +7,35 @@ library(tidyr)
 # The header that includes the auth token
 headers <- c('Authorization' = paste("Token", 'XX'))
 
+
+# ideal workflow: 
+# 1. get list of questions
+# 2. create a question csv by looping through the list of questions
+# 3. Create a df with all predictions for a question
+
+groups <- c("19899", "19901", "19907", "19912", "19954", "19961", "19970",
+            "19975", "19978", "19997", "20333", "20334", "20335", "20336",
+            "20342") |> sort()
+
+sub_questions <- my_vector <- c(
+  20283, 20284, 20286, 20287, 20288, 20289, 20290, 20292, 20285, 20291,
+  20236, 20281, 20282, 20298, 20299, 20300, 20301, 20302, 20303, 20305,
+  20306, 20307, 20304, 20239, 20296, 20297, 20310, 20311, 20312, 20313,
+  20314, 20315, 20316, 20317, 20318, 20319, 20308, 20309, 20238, 20320,
+  20321, 20326, 20329, 20331, 20322, 20323, 20324, 20325, 20327, 20328,
+  20330, 20237, 19957, 19956, 19958, 19955, 19965, 19964, 19962, 19963,
+  19971, 19972, NA, 19979, 19980, NA, NA, NA, NA, NA, 20343, 20344
+) |> sort()
+
 data_list <- list()
 
 # Get question ids for comparisons
 project_id <- 2723
 base_url <- paste0('https://www.metaculus.com/api2/questions/?project=', project_id, '&')
+# this way of fetching the data for example doesn't give us the description? 
+# and also we're not getting the subquestions directly, but rather just in 
+# a nested weird way
+
 loopcounter <- 0
 offset <- 0  # Initialize offset
 limit <- 100  # Number of records per request
@@ -72,18 +96,7 @@ repeat {
 
 data <- bind_rows(data_list)
 
-names(data) |> sort()
-
-cbind(data$resolution, data$sub_questions_resolution))
-
-# fix names with sub_questions_sub
-sub_question_names <- grep(x = names(data), pattern = "sub_questions", value = TRUE) |> sort()
-for (i in nrow(data)) {
-  
-}
-
-data$sub_questions_conditioned_on_resolution
-
+# question data
 question_data <- data |>
   select(id, sub_questions_id, 
          active_state, sub_questions_active_state, 
@@ -104,6 +117,22 @@ question_data <- data |>
          type,
          url)
 
+# prediction data
+prediction_data <- data |>
+  select(id, sub_questions_id, 
+         community_prediction, sub_questions_community_prediction) |>
+  unnest(community_prediction, names_sep = "_") |>
+  unnest(sub_questions_community_prediction, names_sep = "_") 
+
+
+
+
+
+rbind(prediction_data$community_prediction_full, 
+      prediction_data$sub_questions_community_prediction_full) 
+
+names(prediction_data)
+
 question_data
 
 data$possibilities
@@ -116,8 +145,7 @@ data <- data |>
          active_state, community_prediction, resolution)
 
 d <- data |>
-  unnest(community_prediction, names_sep = "_") |>
-  unnest(sub_questions_community_prediction, names_sep = "_") 
+  
 
 # Write to CSV - currently not working since we have nested data
 # csv_filename <- "questions_list.csv"
