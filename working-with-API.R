@@ -5,7 +5,7 @@ library(dplyr)
 library(tidyr)
 
 # The header that includes the auth token
-headers <- c('Authorization' = paste("Token", 'XX'))
+headers <- c('Authorization' = paste("Token", 'TOKEN'))
 
 
 # ideal workflow: 
